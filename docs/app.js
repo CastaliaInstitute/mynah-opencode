@@ -662,6 +662,12 @@ $("#back").onclick = () => {
   else location.hash = "#/dashboard";
 };
 $("#settings").onclick = () => (location.hash = "#/settings");
+let reloadedForUpdate = false;
+navigator.serviceWorker?.addEventListener("controllerchange", () => {
+  if (reloadedForUpdate) return;
+  reloadedForUpdate = true;
+  location.reload(); // a new service worker took over: load the fresh shell
+});
 navigator.serviceWorker?.register("sw.js");
 const inboundPair = checkInboundPair();
 if (inboundPair) applyPair(inboundPair);
