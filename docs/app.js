@@ -103,24 +103,28 @@ function hydrate(host, server) {
 
 /* ---------- screens: dashboard / dial / webui ---------- */
 
+async function loadTasks() {
+  const discovery = await api("/api/discovery");
+  state.servers = discovery.servers.filter((server) => server.found);
+  await Promise.all(state.servers.map(async (server) => {
+    try {
+      const [sessions, active] = await Promise.all([
+        serverApi(server.host, "/api/session?limit=30&order=desc"),
+        serverApi(server.host, "/api/session/active"),
+      ]);
+      await hydrate(server.host, server)(sessions, active.data || {});
+    } catch (error) {
+      if (error.message !== "unpaired") console.warn(`dashboard ${server.host}:`, error.message);
+    }
+  }));
+}
+
 async function dashboardScreen() {
   setTitle("Mynah");
   stopPoll();
   view.innerHTML = `<div class="empty">Gathering tasks…</div>`;
   try {
-    const discovery = await api("/api/discovery");
-    state.servers = discovery.servers.filter((server) => server.found);
-    await Promise.all(state.servers.map(async (server) => {
-      try {
-        const [sessions, active] = await Promise.all([
-          serverApi(server.host, "/api/session?limit=30&order=desc"),
-          serverApi(server.host, "/api/session/active"),
-        ]);
-        await hydrate(server.host, server)(sessions, active.data || {});
-      } catch (error) {
-        if (error.message !== "unpaired") console.warn(`dashboard ${server.host}:`, error.message);
-      }
-    }));
+    await loadTasks();
     renderDashboard();
   } catch (error) {
     if (error.message !== "unpaired") {
@@ -172,9 +176,10 @@ function renderDashboard() {
   }));
 }
 
-function dialScreen() {
+async function dialScreen() {
   setTitle("Task");
   stopPoll();
+  if (![...state.tasks.values()].some((task) => task.host === state.host)) await loadTasks(); // deep links land here cold
   const tasks = [...state.tasks.values()].filter((task) => task.host === state.host)
     .sort((a, b) => (b.active - a.active) || (b.updated - a.updated));
   if (!tasks.length || !tasks.some((task) => task.id === state.sessionID)) {
@@ -219,9 +224,10 @@ function dialScreen() {
   $("#refresh").onclick = dashboardScreen;
 }
 
-function webuiScreen() {
+async function webuiScreen() {
   setTitle("WebUI");
   stopPoll();
+  if (![...state.tasks.values()].some((task) => task.host === state.host)) await loadTasks(); // deep links land here cold
   const host = state.host;
   const tasks = [...state.tasks.values()].filter((task) => task.host === host)
     .sort((a, b) => (b.active - a.active) || (b.updated - a.updated));
@@ -293,7 +299,11 @@ async function api(path, options = {}, attempt = 0) {
   if (options.body) headers["Content-Type"] = "application/json";
   let response;
   try {
-    response = await fetch(state.bridge.replace(/\/$/, "") + path, { ...options, headers });
+    response = await fetch(state.bridge.replace(/\/$/, "") + path, {
+      ...options,
+      headers,
+      signal: AbortSignal.timeout(20000), // a stalled tailnet link must not hang the dashboard
+    });
   } catch (error) {
     if (attempt < 2) { // Safari says "Load failed" on transient tailnet drops
       await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
@@ -302,9 +312,14 @@ async function api(path, options = {}, attempt = 0) {
     throw new Error(`Can't reach ${state.bridge.replace(/^https?:\/\//, "") || "the bridge"} — check Tailscale is on and the URL in ⚙ Settings`);
   }
   if (response.status === 401) {
-    toast("Pair this device in Settings (bridge token)");
-    location.hash = "#/settings";
-    throw new Error("unpaired");
+    let detail = "";
+    try { detail = (await response.json()).error || ""; } catch { /* proxied server errors aren't JSON */ }
+    if (detail.startsWith("pair with the bridge")) {
+      toast("Pair this device in Settings (bridge token)");
+      location.hash = "#/settings";
+      throw new Error("unpaired");
+    }
+    throw new Error("that server needs its password in the bridge's passwords.json");
   }
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json();
