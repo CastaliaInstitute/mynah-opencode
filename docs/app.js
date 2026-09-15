@@ -1,6 +1,7 @@
 /* Mynah OpenCode — servers → projects → tasks (sessions) over the bridge. */
 
 const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const view = $("#view");
 
 const state = {
@@ -41,7 +42,7 @@ function gaugeSvg(task, size) {
       <circle cx="${r}" cy="${r}" r="${rGoal}" class="gauge-goal" stroke-dasharray="${goalDash}" transform="rotate(-90 ${r} ${r})"/>
       <circle cx="${r}" cy="${r}" r="${rState}" class="gauge-track"/>
       <circle cx="${r}" cy="${r}" r="${rState}" class="gauge-state" stroke-dasharray="${stateDash}" transform="rotate(-90 ${r} ${r})"/>
-      <text x="${r}" y="${r}" class="gauge-glyph" text-anchor="middle" dominant-baseline="central">${GLYPHS[hash(task.directory) % GLYPHS.length]}</text>
+      <text x="${r}" y="${r}" class="gauge-glyph" text-anchor="middle" dominant-baseline="central">${escapeHtml(task.icon || GLYPHS[hash(task.directory) % GLYPHS.length])}</text>
     </svg>`;
 }
 
@@ -51,9 +52,17 @@ function hash(text) {
   return value;
 }
 
+function modelLabel(model) {
+  const id = typeof model === "string" ? model : model?.id || "";
+  return id.replace(/^[^/]*\//, "");
+}
+
 function hydrate(host, server) {
   return async ({ data: sessions }, activeMap) => {
-    const todos = await api(`/api/server/${host}/todos`).catch(() => ({ data: {} }));
+    const [todos, icons] = await Promise.all([
+      api(`/api/server/${host}/todos`).catch(() => ({ data: {} })),
+      api(`/api/server/${host}/icons`).catch(() => ({ data: {} })),
+    ]);
     for (const session of sessions) {
       const todoList = todos.data[session.id] || [];
       state.tasks.set(`${host}|${session.id}`, {
@@ -65,6 +74,7 @@ function hydrate(host, server) {
         updated: session.time?.updated || session.time?.created || 0,
         cost: session.cost || 0,
         active: !!activeMap?.[session.id],
+        icon: icons.data[session.id] || "",
         todos: {
           done: todoList.filter((todo) => todo.status === "completed" || todo.status === "cancelled").length,
           total: todoList.length,
@@ -94,22 +104,52 @@ async function dashboardScreen() {
         if (error.message !== "unpaired") console.warn(`dashboard ${server.host}:`, error.message);
       }
     }));
-    const tasks = [...state.tasks.values()].sort((a, b) => (b.active - a.active) || (b.updated - a.updated));
-    view.innerHTML = `
-      <div class="chip-row">
-        <a class="chip" href="#/servers">${state.servers.length} server${state.servers.length === 1 ? "" : "s"}</a>
-      </div>
-      ${tasks.length ? `<div class="gauge-grid">${tasks.map((task) => `
-        <a class="gauge-cell" href="#/dial/${enc(task.host)}/${enc(task.id)}">
-          ${gaugeSvg(task, 96)}
-          <div class="gauge-label">${escapeHtml(task.title)}</div>
-          <div class="gauge-sub">${escapeHtml(project(task.directory))} · ${ago(new Date(task.updated).toISOString())}</div>
-        </a>`).join("")}</div>`
-      : `<div class="empty">No tasks found yet.<br><span class="error">${state.token ? "" : "Pair in ⚙ Settings first."}</span></div>`}`;
+    renderDashboard();
   } catch (error) {
     if (error.message !== "unpaired") view.innerHTML = `<div class="empty error">${error.message}</div>`;
   }
   $("#refresh").onclick = dashboardScreen;
+}
+
+function renderDashboard() {
+  const mode = localStorage.getItem("mynah.group") || "all";
+  const tasks = [...state.tasks.values()].sort((a, b) => (b.active - a.active) || (b.updated - a.updated));
+  const seg = `<div class="seg">${[["all", "All"], ["server", "By server"], ["project", "By project"]].map(([value, label]) =>
+    `<button data-mode="${value}"${mode === value ? ' class="on"' : ""}>${label}</button>`).join("")}</div>`;
+  const gaugeCell = (task) => `
+    <a class="gauge-cell" href="#/dial/${enc(task.host)}/${enc(task.id)}">
+      ${gaugeSvg(task, 96)}
+      <div class="gauge-label">${escapeHtml(task.title)}</div>
+      <div class="gauge-sub">${escapeHtml(mode === "project"
+        ? serverOf(task.host)?.hostname || task.host
+        : project(task.directory))} · ${ago(new Date(task.updated).toISOString())}</div>
+    </a>`;
+  let body;
+  if (mode === "all") {
+    body = `<div class="gauge-grid">${tasks.map(gaugeCell).join("")}</div>`;
+  } else {
+    const key = mode === "server" ? ((task) => task.host) : ((task) => task.directory);
+    const groups = new Map();
+    for (const task of tasks) {
+      if (!groups.has(key(task))) groups.set(key(task), []);
+      groups.get(key(task)).push(task);
+    }
+    body = [...groups.entries()].map(([name, list]) => `
+      <div class="section-label">${escapeHtml(mode === "server"
+        ? serverOf(name)?.hostname || name
+        : `${project(name)} — ${name}`)}</div>
+      <div class="gauge-grid">${list.map(gaugeCell).join("")}</div>`).join("");
+  }
+  view.innerHTML = `
+    <div class="chip-row">
+      <a class="chip" href="#/servers">${state.servers.length} server${state.servers.length === 1 ? "" : "s"}</a>
+    </div>
+    ${seg}
+    ${tasks.length ? body : `<div class="empty">No tasks found yet.<br><span class="error">${state.token ? "" : "Pair in ⚙ Settings first."}</span></div>`}`;
+  $$(".seg button").forEach((button) => (button.onclick = () => {
+    localStorage.setItem("mynah.group", button.dataset.mode);
+    renderDashboard();
+  }));
 }
 
 function dialScreen() {
@@ -149,6 +189,11 @@ function webuiScreen() {
       </div>`;
   }).join("");
   view.innerHTML = `
+    ${serverOf(host)?.auth_required ? `
+      <div class="notice">
+        This server asks for a login, which iframes can't show.
+        <button id="preauth" class="linkbtn">Open it once in a tab</button> to log in, then come back.
+      </div>` : ""}
     <div class="framebar">
       <button class="iconbtn" id="prev" ${index === 0 ? "disabled" : ""} aria-label="Previous task">&#x2039;</button>
       <div class="grow framebar-title">${escapeHtml(tasks[index].title)}</div>
@@ -178,6 +223,7 @@ function webuiScreen() {
   };
   $("#prev").onclick = () => step(-1);
   $("#next").onclick = () => step(1);
+  $("#preauth")?.addEventListener("click", () => window.open(webui + "/", "_blank"));
   $("#refresh").onclick = () => webuiScreen();
 }
 
@@ -247,15 +293,15 @@ function settingsScreen() {
   view.innerHTML = `
     <form class="settings">
       <label>Bridge URL
-        <input name="bridge" type="url" placeholder="https://daniels-laptop.tail667900.ts.net" value="${state.bridge}">
+        <input name="bridge" type="url" placeholder="https://daniels-laptop.tail667900.ts.net" value="${escapeHtml(state.bridge)}">
       </label>
       <label>Bridge token
-        <input name="token" type="password" placeholder="from the bridge pairing link" value="${state.token}">
+        <input name="token" type="password" placeholder="from the bridge pairing link" value="${escapeHtml(state.token)}">
       </label>
       <button type="submit">Save</button>
       <p class="sub" style="color:var(--dim);font-size:13px">
         Run the bridge on a tailnet machine:
-        <code>python3 tools/mynah_opencode_bridge.py</code> — it prints the token and serves this PWA itself.
+        <code>python3 tools/mynah_opencode_bridge.py</code> — it prints a one-click pair link, or paste the token here.
       </p>
     </form>`;
   $("form.settings").onsubmit = (event) => {
@@ -349,7 +395,7 @@ async function sessionsScreen() {
             <span class="dot ${active[session.id] ? "found" : session.time?.updated && Date.now() - new Date(session.time.updated) < 36e5 ? "on" : "off"}"></span>
             <div class="grow">
               <h2>${session.title || session.id}</h2>
-              <div class="sub">${session.model ? session.model.replace(/^[^/]*\//, "") : ""}</div>
+              <div class="sub">${escapeHtml(modelLabel(session.model))}</div>
             </div>
           </div>
           <div class="meta">
@@ -409,9 +455,62 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+/* ---------- pairing ---------- */
+
+const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
+const HOST_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+async function applyPair(params) {
+  const host = (params.get("host") || "").replace(/\.+$/, "");
+  const token = params.get("token") || "";
+  const port = params.get("port");
+  if (!HOST_PATTERN.test(host) || !TOKEN_PATTERN.test(token)) {
+    toast("That pairing link is malformed");
+    location.hash = "#/settings";
+    return false;
+  }
+  state.bridge = `https://${host}${port && port !== "443" ? `:${port}` : ""}`;
+  state.token = token;
+  try {
+    await api("/api/discovery");
+    localStorage.setItem("mynah.bridge", state.bridge);
+    localStorage.setItem("mynah.token", state.token);
+    toast(`Paired with ${host}`);
+    location.hash = "#/dashboard";
+    return true;
+  } catch (error) {
+    if (error.message !== "unpaired") toast(`Bridge unreachable at ${state.bridge}`);
+    location.hash = "#/settings";
+    return false;
+  }
+}
+
+function parseCustomPair(text) {
+  if (!text.startsWith("mynah-opencode://")) return null;
+  return new URL("https://x/?" + text.split("?", 2)[1]).searchParams;
+}
+
+function checkInboundPair() {
+  const query = new URLSearchParams(location.search);
+  const embedded = query.get("pair"); // registerProtocolHandler("?pair=%s")
+  if (embedded) {
+    const params = parseCustomPair(decodeURIComponent(embedded));
+    if (params) return params;
+    history.replaceState(null, "", location.pathname);
+  }
+  return null;
+}
+
+try {
+  navigator.registerProtocolHandler?.("mynah-opencode", "?pair=%s");
+} catch {
+  // unsupported on this browser; the web pair link still works
+}
+
 /* ---------- router ---------- */
 
 const routes = [
+  [/^#\/pair\?(.+)$/, (_, query) => applyPair(new URLSearchParams(query.replace(/#/g, "")))],
   [/^#\/dashboard$/, () => dashboardScreen()],
   [/^#\/dial\/([^/]+)\/([^/]+)$/, (host, sessionID) => {
     state.host = decodeURIComponent(host);
@@ -457,4 +556,6 @@ $("#back").onclick = () => {
 };
 $("#settings").onclick = () => (location.hash = "#/settings");
 navigator.serviceWorker?.register("sw.js");
-route();
+const inboundPair = checkInboundPair();
+if (inboundPair) applyPair(inboundPair);
+else route();
