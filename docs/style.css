@@ -241,21 +241,46 @@ pre.msg {
 
 /* ---------- dial (zoomed single gauge) ---------- */
 
-.dial {
+.dial-strip {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  height: calc(100vh - env(safe-area-inset-top) - 110px);
+}
+
+.dial-slide {
+  flex: 0 0 100%;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding-top: 8vh;
   animation: zoom 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 @keyframes zoom { from { transform: scale(0.55); opacity: 0.2; } }
 
-.dial-circle { background: none; border: none; padding: 0; width: min(78vw, 340px); cursor: pointer; }
-.dial-circle .gauge { width: 100%; height: auto; }
-.dial-title { margin-top: 18px; font-size: 17px; font-weight: 650; text-align: center; }
+.dial-circle { position: relative; background: none; border: none; padding: 0; width: min(74vw, 320px); cursor: pointer; }
+.dial-circle .gauge { width: 100%; height: auto; display: block; }
+.dial-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 13%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+  pointer-events: none;
+}
+.dial-state { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--luna); }
+.dial-state.running { color: var(--terra); }
+.dial-state.done { color: var(--sol); }
+.dial-status div:not(.dial-state) { font-size: 12px; color: var(--dim); }
+.dial-title { margin-top: 18px; font-size: 17px; font-weight: 650; text-align: center; padding: 0 16px; }
 .dial-sub { margin-top: 4px; color: var(--dim); font-size: 13px; text-align: center; }
-.dial .gauge-glyph { font-size: 78px; }
+.dial .gauge-glyph { font-size: 74px; }
 
 /* ---------- webui iframe strip ---------- */
 
