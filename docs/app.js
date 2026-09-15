@@ -123,7 +123,10 @@ async function dashboardScreen() {
     }));
     renderDashboard();
   } catch (error) {
-    if (error.message !== "unpaired") view.innerHTML = `<div class="empty error">${error.message}</div>`;
+    if (error.message !== "unpaired") {
+      view.innerHTML = `<div class="empty">${escapeHtml(error.message)}<br><button class="linkbtn" onclick="dashboardScreen()">Retry</button></div>`;
+      state.poll = setInterval(() => dashboardScreen(), 15000); // self-heal once the tailnet is back
+    }
   }
   $("#refresh").onclick = dashboardScreen;
 }
@@ -284,11 +287,20 @@ function b64url(text) {
 
 /* ---------- bridge api ---------- */
 
-async function api(path, options = {}) {
+async function api(path, options = {}, attempt = 0) {
   const headers = { ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   if (options.body) headers["Content-Type"] = "application/json";
-  const response = await fetch(state.bridge.replace(/\/$/, "") + path, { ...options, headers });
+  let response;
+  try {
+    response = await fetch(state.bridge.replace(/\/$/, "") + path, { ...options, headers });
+  } catch (error) {
+    if (attempt < 2) { // Safari says "Load failed" on transient tailnet drops
+      await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+      return api(path, options, attempt + 1);
+    }
+    throw new Error("Can't reach the bridge — check Tailscale is on");
+  }
   if (response.status === 401) {
     toast("Pair this device in Settings (bridge token)");
     location.hash = "#/settings";
