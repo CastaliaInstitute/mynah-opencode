@@ -371,7 +371,7 @@ function settingsScreen() {
     localStorage.setItem("mynah.bridge", state.bridge);
     localStorage.setItem("mynah.token", state.token);
     toast("Saved");
-    location.hash = "#/servers";
+    location.hash = "#/dashboard";
   };
 }
 
