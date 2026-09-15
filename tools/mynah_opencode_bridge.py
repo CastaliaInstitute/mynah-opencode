@@ -156,7 +156,7 @@ class TodoWatch:
                     credential = base64.b64encode(f"{user}:{password}".encode()).decode()
                     request.add_header("Authorization", f"Basic {credential}")
                 with urlopen(request, timeout=None, context=SSL_INSECURE) as response:
-                    print(f"bridge: watching events on {host}")
+                    print(f"bridge: watching events on {host}", flush=True)
                     for line in response:
                         line = line.strip()
                         if not line.startswith(b"data:"):
@@ -172,6 +172,102 @@ class TodoWatch:
             time.sleep(5)
 
 
+class IconWatch:
+    """Asks a local LLM for one emoji per task, based on the task's scope.
+
+    Polls each found server's session list; for every unseen session it sends
+    the title + project to an OpenAI-compatible endpoint (default: the MLX
+    server on the laptop) and caches the emoji it replies with. Failures fall
+    back to the PWA's hash-derived glyph.
+    """
+
+    def __init__(self, credentials_for, api_base, model):
+        self.credentials_for = credentials_for
+        self.api_base = api_base.rstrip("/") if api_base else ""
+        self.model = model
+        self.lock = threading.Lock()
+        self.cache = {}  # host -> {sessionID: icon}
+        self.pollers = set()
+        self.persist_path = CONFIG_DIR / "icons.json"
+        try:
+            self.cache = json.loads(self.persist_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    def get(self, host):
+        with self.lock:
+            return dict(self.cache.get(host) or {})
+
+    def _save(self):
+        try:
+            self.persist_path.write_text(json.dumps(self.cache))
+        except OSError:
+            pass
+
+    def ensure(self, host, server):
+        if host in self.pollers or not self.api_base:
+            return
+        self.pollers.add(host)
+        threading.Thread(target=self._poll, args=(host, server), daemon=True).start()
+
+    def _poll(self, host, server):
+        url = f"{server['scheme']}://{server['addr']}:{server['port']}/api/session?limit=30&order=desc"
+        while True:
+            try:
+                request = urllib.request.Request(url)
+                user, password = self.credentials_for(host)
+                if password:
+                    credential = base64.b64encode(f"{user}:{password}".encode()).decode()
+                    request.add_header("Authorization", f"Basic {credential}")
+                with urlopen(request, timeout=30, context=SSL_INSECURE) as response:
+                    sessions = json.loads(response.read())["data"]
+                with self.lock:
+                    known = self.cache.get(host, {})
+                pending = [session for session in sessions if session["id"] not in known]
+                for session in pending[:3]:  # trickle; the LLM is local but not instant
+                    icon = self._select_icon(session)
+                    if icon is None:
+                        continue  # LLM unreachable; retry next cycle
+                    with self.lock:
+                        self.cache.setdefault(host, {})[session["id"]] = icon
+                    self._save()
+            except Exception as exc:
+                print(f"bridge: icon poll {host} failed: {exc}", file=sys.stderr)
+            time.sleep(60)
+
+    def _select_icon(self, session):
+        title = session.get("title") or ""
+        directory = (session.get("location") or {}).get("directory") or ""
+        prompt = (
+            "Reply with exactly one emoji that represents the scope of this coding task.\n"
+            f"Task: {title}\n"
+            f"Project: {directory.rsplit('/', 1)[-1]}\n"
+            "The emoji and nothing else."
+        )
+        request = urllib.request.Request(
+            f"{self.api_base}/chat/completions",
+            data=json.dumps({
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 10,
+                "temperature": 0,
+            }).encode(),
+            method="POST",
+        )
+        request.add_header("Content-Type", "application/json")
+        try:
+            with urlopen(request, timeout=90, context=SSL_INSECURE) as response:
+                content = json.loads(response.read())["choices"][0]["message"]["content"].strip()
+        except (urllib.error.URLError, OSError, ssl.SSLError, KeyError, json.JSONDecodeError):
+            return None  # unreachable or malformed: retry next cycle
+        for threshold in (0x1F000, 0x2100):  # proper emoji first, then misc symbols
+            for char in content:
+                code = ord(char)
+                if code >= threshold and not 0xFE00 <= code <= 0xFE0F:
+                    return char
+        return ""  # LLM replied without an emoji: stop retrying
+
+
 class Servers:
     """Cached tailnet + OpenCode probe results."""
 
@@ -180,6 +276,7 @@ class Servers:
         self.lock = threading.Lock()
         self.snapshot = {"servers": [], "checked_at": 0}
         self.todos = None  # set by main()
+        self.icons = None  # set by main()
 
     def scan_once(self):
         servers = []
@@ -195,6 +292,8 @@ class Servers:
             servers.append(server)
             if probe["found"] and self.todos:
                 self.todos.ensure(peer["host"], server)
+                if self.icons:
+                    self.icons.ensure(peer["host"], server)
         servers.sort(key=lambda s: (not s["found"], not s["online"], s["host"]))
         with self.lock:
             self.snapshot = {"servers": servers, "checked_at": time.time()}
@@ -230,7 +329,7 @@ class Servers:
 
     def _probe(self, peer):
         if not peer["online"] and not peer["self"]:
-            return {"found": False, "scheme": "", "addr": "", "port": self.port, "status": 0}
+            return {"found": False, "scheme": "", "addr": "", "port": self.port, "status": 0, "auth_required": False}
         candidates = []
         if peer["self"]:
             candidates.append(("http", "127.0.0.1", self.port))
@@ -244,10 +343,11 @@ class Servers:
             url = f"{scheme}://{addr}:{port}/api/health"
             code = self._health_code(url)
             if code in (200, 401):
-                return {"found": True, "scheme": scheme, "addr": addr, "port": port, "status": code}
+                return {"found": True, "scheme": scheme, "addr": addr, "port": port, "status": code,
+                        "auth_required": code == 401}
             if code:
                 return {"found": False, "scheme": scheme, "addr": addr, "port": port, "status": code}
-        return {"found": False, "scheme": "", "addr": "", "port": self.port, "status": 0}
+        return {"found": False, "scheme": "", "addr": "", "port": self.port, "status": 0, "auth_required": False}
 
     def _health_code(self, url):
         try:
@@ -369,6 +469,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(404, {"error": f"no OpenCode instance found for {host}"}, cors_headers())
         if forward_path in ("todos", "api/todos"):
             return self.send_json(200, {"data": self.servers.todos.get(host)}, cors_headers())
+        if forward_path in ("icons", "api/icons"):
+            return self.send_json(200, {"data": self.servers.icons.get(host)}, cors_headers())
         target = f"{server['scheme']}://{server['addr']}:{server['port']}"
         query = urlsplit(self.path).query
         url = f"{target}/{forward_path}{('?' + query) if query else ''}"
@@ -444,6 +546,11 @@ def main():
                         help="JSON mapping host (or *) to OpenCode server password")
     parser.add_argument("--ts-proxy", default=None, metavar="URL",
                         help="route tailnet traffic through tailscaled's userspace proxy (e.g. http://127.0.0.1:1055)")
+    parser.add_argument("--pair-url", default="https://castaliainstitute.github.io/mynah-opencode",
+                        help="published PWA URL used to build the one-click pair link")
+    parser.add_argument("--icon-api", default=os.environ.get("MYNAH_ICON_API", "https://daniels-laptop.tail667900.ts.net:8443/v1"),
+                        help="OpenAI-compatible endpoint used to pick task icons (empty string disables)")
+    parser.add_argument("--icon-model", default="mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit")
     args = parser.parse_args()
 
     global OPENER
@@ -460,6 +567,7 @@ def main():
     Handler.token = load_or_create_token()
     Handler.passwords = load_passwords(args.passwords)
     servers.todos = TodoWatch(credentials_for=get_credentials)
+    servers.icons = IconWatch(credentials_for=get_credentials, api_base=args.icon_api, model=args.icon_model)
 
     threading.Thread(target=servers.loop, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
@@ -471,10 +579,13 @@ def main():
     except Exception:
         dns = "localhost"
 
-    pair = "mynah-opencode://pair?" + urlencode({"host": dns, "port": args.port, "token": Handler.token})
-    print(f"bridge: serving Mynah on http://127.0.0.1:{args.port}")
-    print(f"bridge: pair link: {pair}")
-    print(f"bridge: publish with: tailscale serve --bg --https=443 http://127.0.0.1:{args.port}")
+    params = urlencode({"host": dns, "token": Handler.token})
+    custom = "mynah-opencode://pair?" + params
+    web = args.pair_url.rstrip("/") + "/#/pair?" + params
+    print(f"bridge: serving Mynah on http://127.0.0.1:{args.port}", flush=True)
+    print(f"bridge: pair the PWA with one click: {web}", flush=True)
+    print(f"bridge: custom scheme link: {custom}", flush=True)
+    print(f"bridge: publish with: tailscale serve --bg --https=443 http://127.0.0.1:{args.port}", flush=True)
     httpd.serve_forever()
 
 
