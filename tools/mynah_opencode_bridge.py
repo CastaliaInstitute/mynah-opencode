@@ -27,6 +27,7 @@ import hmac
 import json
 import os
 import secrets
+import shutil
 import ssl
 import subprocess
 import sys
@@ -44,6 +45,41 @@ OPENCODE_USER = "opencode"
 DISCOVERY_INTERVAL = 5.0
 PROBE_TIMEOUT = 1.2
 PROBE_TIMEOUT_HTTPS = 1.5
+
+# The tailscale CLI may not be on launchd's PATH; find it manually.
+TAILSCALE = next(path for path in
+                 (shutil.which("tailscale"), "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale")
+                 if path and Path(path).exists())
+
+TAILSCALE_ARGS = []  # explicit --socket when the CLI default cannot reach the daemon
+
+# When tailscaled runs userspace-networking, traffic to tailnet IPs must go
+# through its local HTTP/SOCKS proxy (--ts-proxy http://127.0.0.1:1055).
+OPENER = None
+
+
+def detect_tailscale_socket():
+    global TAILSCALE_ARGS
+    candidates = ([], ["--socket=/opt/homebrew/var/run/tailscaled.sock"], ["--socket=/var/run/tailscaled.socket"])
+    for candidate in candidates:
+        try:
+            result = subprocess.run([TAILSCALE, *candidate, "status", "--json"],
+                                    capture_output=True, text=True, timeout=10)
+            if result.stdout.strip().startswith("{"):
+                TAILSCALE_ARGS = candidate
+                return
+        except (OSError, subprocess.SubprocessError):
+            continue
+
+
+def urlopen(request, timeout, context=None):
+    if OPENER:
+        return OPENER.open(request, timeout=timeout)
+    return urllib.request.urlopen(request, timeout=timeout, context=context)
+
+
+def tailscale(*args, **kwargs):
+    return subprocess.run([TAILSCALE, *TAILSCALE_ARGS, *args], **kwargs)
 
 PWA_DIR = Path(__file__).resolve().parent.parent / "docs"
 CONFIG_DIR = Path.home() / ".config" / "mynah-opencode"
@@ -84,8 +120,8 @@ class TodoWatch:
     plain REST endpoint for the PWA.
     """
 
-    def __init__(self, password_for):
-        self.password_for = password_for
+    def __init__(self, credentials_for):
+        self.credentials_for = credentials_for
         self.lock = threading.Lock()
         self.cache = {}  # host -> {sessionID: [todos]}
         self.watchers = set()
@@ -115,11 +151,11 @@ class TodoWatch:
             try:
                 request = urllib.request.Request(url)
                 request.add_header("Accept", "text/event-stream")
-                password = self.password_for(host)
+                user, password = self.credentials_for(host)
                 if password:
-                    credential = base64.b64encode(f"{OPENCODE_USER}:{password}".encode()).decode()
+                    credential = base64.b64encode(f"{user}:{password}".encode()).decode()
                     request.add_header("Authorization", f"Basic {credential}")
-                with urllib.request.urlopen(request, timeout=None, context=SSL_INSECURE) as response:
+                with urlopen(request, timeout=None, context=SSL_INSECURE) as response:
                     print(f"bridge: watching events on {host}")
                     for line in response:
                         line = line.strip()
@@ -166,13 +202,11 @@ class Servers:
 
     def _peers(self):
         try:
-            raw = subprocess.run(
-                ["tailscale", "status", "--json"],
-                capture_output=True, text=True, timeout=10,
-            ).stdout
+            raw = tailscale("status", "--json", capture_output=True, text=True, timeout=10).stdout
             status = json.loads(raw)
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
             print(f"bridge: tailscale status failed: {exc}", file=sys.stderr)
+            detect_tailscale_socket()  # daemon may have moved sockets (reboot, upgrade)
             return []
         peers = [status.get("Self") or {}] + list((status.get("Peer") or {}).values())
         seen = set()
@@ -218,7 +252,7 @@ class Servers:
     def _health_code(self, url):
         try:
             request = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT, context=SSL_INSECURE) as response:
+            with urlopen(request, timeout=PROBE_TIMEOUT, context=SSL_INSECURE) as response:
                 return response.status
         except urllib.error.HTTPError as exc:
             return exc.code
@@ -341,12 +375,12 @@ class Handler(BaseHTTPRequestHandler):
 
         request = urllib.request.Request(url, data=self.read_body() if method == "POST" else None, method=method)
         request.add_header("Content-Type", self.headers.get("Content-Type", "application/json"))
-        password = get_password(host)
+        user, password = get_credentials(host)
         if password:
-            credential = base64.b64encode(f"{OPENCODE_USER}:{password}".encode()).decode()
+            credential = base64.b64encode(f"{user}:{password}".encode()).decode()
             request.add_header("Authorization", f"Basic {credential}")
         try:
-            with urllib.request.urlopen(request, timeout=30, context=SSL_INSECURE) as response:
+            with urlopen(request, timeout=30, context=SSL_INSECURE) as response:
                 body = response.read()
                 self.send_common(response.status, body, response.headers.get_content_type(), cors_headers())
         except urllib.error.HTTPError as exc:
@@ -356,8 +390,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(502, {"error": f"proxy to {host} failed: {exc}"}, cors_headers())
 
 
-def get_password(host):
-    return Handler.passwords.get(host) or Handler.passwords.get("*") or read_opencode_password()
+def get_credentials(host):
+    """passwords.json values may be a password string or {user, password}."""
+    entry = Handler.passwords.get(host) or Handler.passwords.get("*") or {}
+    user = entry.get("user") or OPENCODE_USER
+    password = entry.get("password") or read_opencode_password()
+    return user, password
 
 
 def cors_headers():
@@ -384,11 +422,18 @@ def load_or_create_token():
 
 
 def load_passwords(path):
+    """Values may be a password string or {user, password} per host."""
     try:
         data = json.loads(path.read_text())
-        return {key: str(value) for key, value in data.items()}
     except (OSError, json.JSONDecodeError):
         return {}
+    credentials = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            credentials[key] = {"user": value.get("user") or OPENCODE_USER, "password": str(value.get("password") or "")}
+        else:
+            credentials[key] = {"user": OPENCODE_USER, "password": str(value)}
+    return credentials
 
 
 def main():
@@ -397,22 +442,32 @@ def main():
     parser.add_argument("--opencode-port", type=int, default=OPENCODE_PORT)
     parser.add_argument("--passwords", type=Path, default=Path(__file__).parent / "passwords.json",
                         help="JSON mapping host (or *) to OpenCode server password")
+    parser.add_argument("--ts-proxy", default=None, metavar="URL",
+                        help="route tailnet traffic through tailscaled's userspace proxy (e.g. http://127.0.0.1:1055)")
     args = parser.parse_args()
+
+    global OPENER
+    detect_tailscale_socket()
+    if args.ts_proxy:
+        OPENER = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": args.ts_proxy, "https": args.ts_proxy}),
+            urllib.request.HTTPSHandler(context=SSL_INSECURE),
+        )
+        os.environ["no_proxy"] = "127.0.0.1,localhost"
 
     servers = Servers(port=args.opencode_port)
     Handler.servers = servers
     Handler.token = load_or_create_token()
     Handler.passwords = load_passwords(args.passwords)
-    servers.todos = TodoWatch(password_for=get_password)
+    servers.todos = TodoWatch(credentials_for=get_credentials)
 
     threading.Thread(target=servers.loop, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     httpd.daemon_threads = True
 
     try:
-        dns = json.loads(subprocess.run(
-            ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=10,
-        ).stdout)["Self"]["DNSName"].rstrip(".")
+        dns = json.loads(tailscale("status", "--json", capture_output=True, text=True, timeout=10).stdout)
+        dns = dns["Self"]["DNSName"].rstrip(".")
     except Exception:
         dns = "localhost"
 
