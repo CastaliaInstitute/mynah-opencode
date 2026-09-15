@@ -272,7 +272,7 @@ class Servers:
     """Cached tailnet + OpenCode probe results."""
 
     def __init__(self, port):
-        self.port = port
+        self.ports = [port] if port == 8080 else [port, 8080]
         self.lock = threading.Lock()
         self.snapshot = {"servers": [], "checked_at": 0}
         self.todos = None  # set by main()
@@ -328,26 +328,29 @@ class Servers:
         return out
 
     def _probe(self, peer):
+        offline = {"found": False, "scheme": "", "addr": "", "port": self.ports[0], "status": 0, "auth_required": False}
         if not peer["online"] and not peer["self"]:
-            return {"found": False, "scheme": "", "addr": "", "port": self.port, "status": 0, "auth_required": False}
-        candidates = []
+            return offline
+        fallback = None
+        for port in self.ports:
+            for scheme, addr in self._candidates(peer):
+                code = self._health_code(f"{scheme}://{addr}:{port}/api/health")
+                if code in (200, 401):
+                    return {"found": True, "scheme": scheme, "addr": addr, "port": port, "status": code,
+                            "auth_required": code == 401}
+                if code and not fallback:
+                    fallback = {"found": False, "scheme": scheme, "addr": addr, "port": port, "status": code,
+                                "auth_required": False}
+        return fallback or offline
+
+    def _candidates(self, peer):
         if peer["self"]:
-            candidates.append(("http", "127.0.0.1", self.port))
-        dns = peer["host"]
+            yield ("http", "127.0.0.1")
         if peer["host"].endswith(".ts.net"):
-            candidates.append(("https", dns, self.port))
+            yield ("https", peer["host"])
         if peer["ip"]:
-            candidates.append(("http", peer["ip"], self.port))
-            candidates.append(("https", peer["ip"], self.port))
-        for scheme, addr, port in candidates:
-            url = f"{scheme}://{addr}:{port}/api/health"
-            code = self._health_code(url)
-            if code in (200, 401):
-                return {"found": True, "scheme": scheme, "addr": addr, "port": port, "status": code,
-                        "auth_required": code == 401}
-            if code:
-                return {"found": False, "scheme": scheme, "addr": addr, "port": port, "status": code}
-        return {"found": False, "scheme": "", "addr": "", "port": self.port, "status": 0, "auth_required": False}
+            yield ("http", peer["ip"])
+            yield ("https", peer["ip"])
 
     def _health_code(self, url):
         try:
