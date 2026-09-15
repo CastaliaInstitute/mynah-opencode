@@ -2,6 +2,8 @@
 
 A PWA for navigating OpenCode across the tailnet: **servers → projects → tasks**. Maintained by [Castalia Institute](https://github.com/CastaliaInstitute).
 
+**Published:** https://castaliainstitute.github.io/mynah-opencode/ (GitHub Pages from `main`, root `/docs`). On first open, point ⚙ Settings at your bridge URL and paste its token — the Pages site talks to the bridge over CORS; the bridge allows any origin.
+
 A browser can't enumerate a tailnet, so a small bridge does the searching: it runs on any tailnet machine, walks `tailscale status --json`, probes every peer's OpenCode port for `/api/health`, and serves the PWA plus an authenticated proxy. The PWA itself is dependency-free vanilla JS.
 
 ## Run
