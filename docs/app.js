@@ -453,18 +453,7 @@ async function sessionsScreen() {
           </div>
         </a>`).join("") : `<div class="empty">No tasks in this project.</div>`)
         + `<button class="fab" id="new">＋ New task</button>`;
-      $("#new").onclick = async () => {
-        try {
-          const { data: session } = await serverApi(state.host, "/api/session", {
-            method: "POST",
-            body: JSON.stringify({ location: { directory: state.directory } }),
-          });
-          toast(`Created ${session.title || session.id}`);
-          location.hash = `#/s/${enc(state.host)}/p/${enc(state.directory)}/t/${enc(session.id)}`;
-        } catch (error) {
-          toast(error.message);
-        }
-      };
+      $("#new").onclick = () => newTaskForm(state.host, state.directory);
     } catch (error) {
       if (error.message !== "unpaired") view.innerHTML = `<div class="empty error">${error.message}</div>`;
     }
@@ -472,6 +461,64 @@ async function sessionsScreen() {
   await render();
   state.poll = setInterval(render, 8000);
   $("#refresh").onclick = render;
+}
+
+function newTaskForm(host, directory) {
+  stopPoll();
+  view.innerHTML = `
+    <form class="newtask">
+      <div class="section-label" style="margin:0 4px">New task — ${escapeHtml(project(directory))}</div>
+      <label>Describe what this task should do
+        <textarea name="text" rows="5" placeholder="e.g. Add pagination to the courses API"></textarea>
+      </label>
+      <label>Model
+        <select name="model"><option value="auto">Auto — scale to the task</option></select>
+      </label>
+      <div class="row">
+        <button type="submit" class="grow">Create</button>
+        <button type="button" id="cancel" class="iconbtn" style="width:44px" aria-label="Cancel">✕</button>
+      </div>
+    </form>`;
+  const select = $("select[name=model]");
+  serverApi(host, "/api/model").then(({ data: models }) => {
+    for (const model of models || []) {
+      const value = `${model.providerID || "opencode"}/${model.id}`;
+      if (select.querySelector(`option[value="${CSS.escape(value)}"]`)) continue;
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = model.name || model.id;
+      select.appendChild(option);
+    }
+  }).catch(() => { /* model list optional; Auto still works */ });
+  $("#cancel").onclick = () => sessionsScreen();
+  $("form.newtask").onsubmit = async (event) => {
+    event.preventDefault();
+    const text = $("textarea[name=text]").value.trim();
+    let picked = select.value;
+    try {
+      if (picked === "auto") {
+        const { data } = await serverApi(host, "/api/auto", { method: "POST", body: JSON.stringify({ text }) });
+        picked = `${data.model.providerID}/${data.model.id}`;
+        toast(`Auto → ${data.model.id} (${data.tier}${data.why ? `: ${data.why}` : ""})`);
+      }
+      const slash = picked.indexOf("/");
+      const providerID = picked.slice(0, slash) || "opencode";
+      const id = picked.slice(slash + 1);
+      const { data: session } = await serverApi(host, "/api/session", {
+        method: "POST",
+        body: JSON.stringify({ location: { directory }, model: { providerID, id } }),
+      });
+      if (text) {
+        await serverApi(host, `/api/session/${session.id}/prompt`, {
+          method: "POST",
+          body: JSON.stringify({ prompt: { text } }),
+        });
+      }
+      location.hash = `#/dial/${enc(host)}/${enc(session.id)}`;
+    } catch (error) {
+      if (error.message !== "unpaired") toast(error.message);
+    }
+  };
 }
 
 async function sessionScreen() {
