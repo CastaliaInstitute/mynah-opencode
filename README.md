@@ -22,12 +22,17 @@ tailscale serve --bg --https=443 http://127.0.0.1:8790
 
 Then open `https://<this-machine>.ts.net` on any tailnet device, add to home screen, and pair by pasting the token in ⚙ Settings (skipped automatically when the PWA is opened from the same origin it is served from).
 
+**Production deployment (m1):** the bridge runs on `m1.tail667900.ts.net` as a KeepAlive LaunchAgent (`com.castalia.mynah-opencode-bridge`), published at **https://m1.tail667900.ts.net/**. m1's tailscaled runs in userspace-networking mode (no root needed; LaunchAgent `com.castalia.tailscaled` with `--tun=userspace-networking --outbound-http-proxy-listen=127.0.0.1:1055`), and the bridge routes all tailnet traffic through that local proxy with `--ts-proxy http://127.0.0.1:1055`. The bridge also auto-detects the tailscale CLI socket (`/opt/homebrew/var/run/tailscaled.sock`) where the launchd PATH default fails.
+
 ## OpenCode auth
 
-The proxy injects HTTP basic auth (`opencode` / password) when forwarding to OpenCode servers. Passwords come from `tools/passwords.json`, mapping host → password:
+The proxy injects HTTP basic auth when forwarding to OpenCode servers. Passwords come from `tools/passwords.json`, mapping host → credentials. A value may be a plain password (username defaults to `opencode`) or `{ "user", "password" }` for servers that use a different username:
 
 ```json
-{ "*": "shared-password", "al-pi4.tail667900.ts.net": "its-own-password" }
+{
+  "*": "shared-password",
+  "m1.tail667900.ts.net": { "user": "dan", "password": "its-own-password" }
+}
 ```
 
 `*` is the fallback; if neither matches, the bridge uses `~/.config/opencode/server-password` (this machine's own web password). Copy `tools/passwords.example.json` to start. The token lives in `~/.config/mynah-opencode/bridge-token`.
