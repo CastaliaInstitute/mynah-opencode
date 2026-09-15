@@ -291,6 +291,13 @@ pre.msg {
 .dial-title { margin-top: 18px; font-size: 17px; font-weight: 650; text-align: center; padding: 0 16px; }
 .dial-sub { margin-top: 4px; color: var(--dim); font-size: 13px; text-align: center; }
 .dial .gauge-glyph { font-size: 52px; }
+.dial-arc-title {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  fill: var(--luna);
+}
 
 /* ---------- webui iframe strip ---------- */
 
