@@ -155,16 +155,46 @@ function renderDashboard() {
 function dialScreen() {
   setTitle("Task");
   stopPoll();
-  const task = state.tasks.get(`${state.host}|${state.sessionID}`);
-  view.innerHTML = task ? `
-    <div class="dial">
-      <button class="dial-circle" id="dial-open" aria-label="Open task web UI">
-        ${gaugeSvg(task, 300)}
-      </button>
-      <div class="dial-title">${escapeHtml(task.title)}</div>
-      <div class="dial-sub">${escapeHtml(project(task.directory))} · ${task.todos.total ? `${task.todos.done}/${task.todos.total} done` : "no goals yet"}${task.active ? " · running" : ""}</div>
-    </div>` : `<div class="empty">Task not in dashboard cache — <a href="#/dashboard">refresh</a>.</div>`;
-  $("#dial-open")?.addEventListener("click", () => (location.hash = `#/webui/${enc(state.host)}/${enc(state.sessionID)}`));
+  const tasks = [...state.tasks.values()].filter((task) => task.host === state.host)
+    .sort((a, b) => (b.active - a.active) || (b.updated - a.updated));
+  if (!tasks.length || !tasks.some((task) => task.id === state.sessionID)) {
+    return void (view.innerHTML = `<div class="empty">Task not in dashboard cache — <a href="#/dashboard">refresh dashboard</a>.</div>`);
+  }
+  const index = tasks.findIndex((task) => task.id === state.sessionID);
+  view.innerHTML = `
+    <div class="dial-strip" id="dial-strip">${tasks.map((task) => {
+      const status = taskState(task);
+      return `
+        <div class="dial-slide">
+          <button class="dial-circle" data-sid="${escapeHtml(task.id)}" aria-label="Open task web UI">
+            ${gaugeSvg(task, 300)}
+            <div class="dial-status">
+              <div class="dial-state ${status}">${status === "running" ? "running" : status === "done" ? "done" : "idle"}</div>
+              <div>${task.todos.total ? `${task.todos.done}/${task.todos.total} goals` : "no goals yet"}</div>
+              <div>${ago(new Date(task.updated).toISOString())}${task.cost ? ` · $${task.cost.toFixed(3)}` : ""}</div>
+            </div>
+          </button>
+          <div class="dial-title">${escapeHtml(task.title)}</div>
+          <div class="dial-sub">${escapeHtml(project(task.directory))}${task.active ? " · running" : ""}</div>
+        </div>`;
+    }).join("")}</div>`;
+  const strip = $("#dial-strip");
+  requestAnimationFrame(() => strip.children[index]?.scrollIntoView({ inline: "center" }));
+  let settle;
+  strip.addEventListener("scroll", () => {
+    clearTimeout(settle);
+    settle = setTimeout(() => {
+      const slide = [...strip.children].findIndex((el) => Math.abs(el.offsetLeft - strip.scrollLeft) < strip.clientWidth / 2);
+      if (slide >= 0 && tasks[slide] && tasks[slide].id !== state.sessionID) {
+        state.sessionID = tasks[slide].id;
+        setTitle(tasks[slide].title);
+      }
+    }, 120);
+  });
+  $$(".dial-circle", strip).forEach((button) => (button.onclick = () => {
+    state.sessionID = button.dataset.sid;
+    location.hash = `#/webui/${enc(state.host)}/${enc(state.sessionID)}`;
+  }));
   $("#refresh").onclick = dashboardScreen;
 }
 
