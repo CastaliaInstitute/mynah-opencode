@@ -47,6 +47,12 @@ The proxy injects HTTP basic auth when forwarding to OpenCode servers. Passwords
 
 Goal completion comes from opencode session todos. OpenCode only publishes todos as `todo.updated` events over the SSE stream at `/api/event`, so the bridge keeps one event-stream subscriber per server and exposes the accumulated state at `GET /api/server/<host>/todos`.
 
+**Auto model mode** — "New task" accepts a description and a model of *Auto*: the bridge classifies the description (light / mid / heavy) with its local LLM — Ollama + `qwen2.5:3b` on m1 (`--icon-api http://127.0.0.1:11434/v1 --icon-model qwen2.5:3b`) — and maps the tier through a ladder (`--auto-ladder`, default: light `glm-5.3-flash`, mid `deepseek-v4-pro-offpeak`, heavy `claude-opus-5`), then creates the session with that model and prompts it. The same LLM picks each task's emoji icon; icons cache in `~/.config/mynah-opencode/icons.json`.
+
+## Theming
+
+The PWA uses the opencode web UI's v2 dark tokens (`packages/ui/src/v2/styles/theme.css`): `#161616` base, `#080808` deep, `#242424`/`#2e2e2e` surfaces, Inter, blue `#3b5cf6` accent, and the agent-color semantics (SOL `#f2cf76`, TERRA `#a2bcff`, LUNA grey).
+
 ## WebUI auth
 
 The iframe points straight at the server's web UI (`https://<host>:<port>/<urlsafe-base64-of-directory>/session/<id>`). The browser will ask for the server's basic auth (`opencode` / password) once per server and remember it. Servers need a TLS endpoint reachable from the tailnet (e.g. `tailscale serve` on the opencode port); servers that only answer plain HTTP will not render inside an HTTPS-hosted PWA.
