@@ -189,6 +189,7 @@ class TodoWatch:
         self.lock = threading.Lock()
         self.cache = {}  # host -> {sessionID: [todos]}
         self.watchers = set()
+        self.blocked = set()  # hosts that answered 401 without credentials on file
 
     def get(self, host):
         with self.lock:
@@ -204,7 +205,7 @@ class TodoWatch:
             self.cache.setdefault(host, {})[session_id] = todos
 
     def ensure(self, host, server):
-        if host in self.watchers:
+        if host in self.watchers or host in self.blocked:
             return
         self.watchers.add(host)
         threading.Thread(target=self._watch, args=(host, server), daemon=True).start()
@@ -231,9 +232,16 @@ class TodoWatch:
                             continue
                         if payload.get("type") == "todo.updated":
                             self.record(host, payload)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401:
+                    print(f"bridge: event stream {host} needs a password in passwords.json", file=sys.stderr)
+                    self.blocked.add(host)
+                    return
+                print(f"bridge: event stream {host} dropped: {exc}", file=sys.stderr)
+                time.sleep(5)
             except Exception as exc:
                 print(f"bridge: event stream {host} dropped: {exc}", file=sys.stderr)
-            time.sleep(5)
+                time.sleep(5)
 
 
 class IconWatch:
@@ -250,6 +258,7 @@ class IconWatch:
         self.lock = threading.Lock()
         self.cache = {}  # host -> {sessionID: icon}
         self.pollers = set()
+        self.blocked = set()  # hosts that answered 401 without credentials on file
         self.persist_path = CONFIG_DIR / "icons.json"
         try:
             self.cache = json.loads(self.persist_path.read_text())
@@ -267,7 +276,7 @@ class IconWatch:
             pass
 
     def ensure(self, host, server):
-        if host in self.pollers:
+        if host in self.pollers or host in self.blocked:
             return
         self.pollers.add(host)
         threading.Thread(target=self._poll, args=(host, server), daemon=True).start()
@@ -293,9 +302,16 @@ class IconWatch:
                     with self.lock:
                         self.cache.setdefault(host, {})[session["id"]] = icon
                     self._save()
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401:
+                    print(f"bridge: icon poll {host} needs a password in passwords.json", file=sys.stderr)
+                    self.blocked.add(host)
+                    return
+                print(f"bridge: icon poll {host} failed: {exc}", file=sys.stderr)
+                time.sleep(60)
             except Exception as exc:
                 print(f"bridge: icon poll {host} failed: {exc}", file=sys.stderr)
-            time.sleep(60)
+                time.sleep(60)
 
     def _select_icon(self, session):
         title = session.get("title") or ""
