@@ -64,7 +64,7 @@ function hash(text) {
 }
 
 function projectColor(directory, alpha = 1) {
-  const hue = hash(directory) % 360;
+  const hue = hash(project(directory)) % 360;
   return alpha >= 1 ? `hsl(${hue}, 42%, 62%)` : `hsla(${hue}, 42%, 55%, ${alpha})`;
 }
 
@@ -152,7 +152,7 @@ function renderDashboard() {
   if (mode === "all") {
     body = `<div class="gauge-grid">${tasks.map(gaugeCell).join("")}</div>`;
   } else {
-    const key = mode === "server" ? ((task) => task.host) : ((task) => task.directory);
+    const key = mode === "server" ? ((task) => task.host) : ((task) => project(task.directory));
     const groups = new Map();
     for (const task of tasks) {
       if (!groups.has(key(task))) groups.set(key(task), []);
@@ -161,7 +161,7 @@ function renderDashboard() {
     body = [...groups.entries()].map(([name, list]) => `
       <div class="section-label"${mode === "project" ? ` style="color:${projectColor(name)}"` : ""}>${escapeHtml(mode === "server"
         ? serverOf(name)?.hostname || name
-        : `${project(name)} — ${name}`)}</div>
+        : name)}</div>
       <div class="gauge-grid">${list.map(gaugeCell).join("")}</div>`).join("");
   }
   view.innerHTML = `
