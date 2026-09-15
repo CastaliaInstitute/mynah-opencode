@@ -2,7 +2,7 @@
   "name": "Mynah OpenCode",
   "short_name": "Mynah",
   "description": "Navigate OpenCode servers, projects, and tasks across the tailnet.",
-  "start_url": "./",
+  "start_url": "./#/dashboard",
   "scope": "./",
   "display": "standalone",
   "background_color": "#161616",
