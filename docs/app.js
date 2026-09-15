@@ -32,12 +32,23 @@ function gaugeSvg(task, size, glyphY) {
   const rState = rGoal - size * 0.085;
   const goal = task.todos.total ? task.todos.done / task.todos.total : 0;
   const status = taskState(task);
-  const color = status === "running" ? "var(--terra)" : status === "done" ? "var(--sol)" : "var(--luna)";
   const goalFrac = Math.max(0.02, goal); // keep a visible sliver when started
   const goalDash = `${(2 * Math.PI * rGoal * goalFrac).toFixed(1)} ${(2 * Math.PI * rGoal).toFixed(1)}`;
   const stateDash = status === "idle" ? `0 ${2 * Math.PI * rState}` : `${2 * Math.PI * rState} 0.01`;
+  const arcId = `arc-${task.id.replace(/[^a-z0-9]/gi, "")}-${size}`;
+  const arcTitle = glyphY != null ? (() => {
+    const rText = rState - size * 0.055;
+    const title = task.title.length > 26 ? `${task.title.slice(0, 25)}…` : task.title;
+    return `
+      <defs>
+        <path id="${arcId}" fill="none" d="M ${r - rText},${r} a ${rText},${rText} 0 1 1 ${2 * rText},0 a ${rText},${rText} 0 1 1 ${-2 * rText},0"/>
+      </defs>
+      <text class="dial-arc-title"><textPath href="#${arcId}" startOffset="0">${escapeHtml(title)}</textPath></text>`;
+  })() : "";
   return `
     <svg class="gauge ${status}" viewBox="0 0 ${size} ${size}" role="img" aria-label="${escapeHtml(task.title)}">
+      ${arcTitle}
+      <circle cx="${r}" cy="${r}" r="${rState}" style="fill:${projectColor(task.directory, 0.09)}"/>
       <circle cx="${r}" cy="${r}" r="${rGoal}" class="gauge-track"/>
       <circle cx="${r}" cy="${r}" r="${rGoal}" class="gauge-goal" stroke-dasharray="${goalDash}" transform="rotate(-90 ${r} ${r})"/>
       <circle cx="${r}" cy="${r}" r="${rState}" class="gauge-track"/>
@@ -50,6 +61,11 @@ function hash(text) {
   let value = 0;
   for (const char of text || "") value = (value * 31 + char.codePointAt(0)) >>> 0;
   return value;
+}
+
+function projectColor(directory, alpha = 1) {
+  const hue = hash(directory) % 360;
+  return alpha >= 1 ? `hsl(${hue}, 42%, 62%)` : `hsla(${hue}, 42%, 55%, ${alpha})`;
 }
 
 function modelLabel(model) {
@@ -121,9 +137,9 @@ function renderDashboard() {
     <a class="gauge-cell" href="#/dial/${enc(task.host)}/${enc(task.id)}">
       ${gaugeSvg(task, 96)}
       <div class="gauge-label">${escapeHtml(task.title)}</div>
-      <div class="gauge-sub">${escapeHtml(mode === "project"
-        ? serverOf(task.host)?.hostname || task.host
-        : project(task.directory))} · ${ago(new Date(task.updated).toISOString())}</div>
+      <div class="gauge-sub">${mode === "project"
+        ? escapeHtml(serverOf(task.host)?.hostname || task.host)
+        : `<span style="color:${projectColor(task.directory)}">${escapeHtml(project(task.directory))}</span>`} · ${ago(new Date(task.updated).toISOString())}</div>
     </a>`;
   let body;
   if (mode === "all") {
@@ -136,7 +152,7 @@ function renderDashboard() {
       groups.get(key(task)).push(task);
     }
     body = [...groups.entries()].map(([name, list]) => `
-      <div class="section-label">${escapeHtml(mode === "server"
+      <div class="section-label"${mode === "project" ? ` style="color:${projectColor(name)}"` : ""}>${escapeHtml(mode === "server"
         ? serverOf(name)?.hostname || name
         : `${project(name)} — ${name}`)}</div>
       <div class="gauge-grid">${list.map(gaugeCell).join("")}</div>`).join("");
@@ -177,7 +193,7 @@ function dialScreen() {
             </div>
           </button>
           <div class="dial-title">${escapeHtml(task.title)}</div>
-          <div class="dial-sub">${escapeHtml(project(task.directory))}${task.active ? " · running" : ""}</div>
+          <div class="dial-sub"><span style="color:${projectColor(task.directory)}">${escapeHtml(project(task.directory))}</span>${task.active ? " · running" : ""}</div>
         </div>`;
     }).join("")}</div>`;
   const strip = $("#dial-strip");
