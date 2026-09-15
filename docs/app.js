@@ -26,7 +26,7 @@ function taskState(task) {
   return "idle";
 }
 
-function gaugeSvg(task, size) {
+function gaugeSvg(task, size, glyphY) {
   const r = size / 2;
   const rGoal = r - size * 0.035;
   const rState = rGoal - size * 0.085;
@@ -42,7 +42,7 @@ function gaugeSvg(task, size) {
       <circle cx="${r}" cy="${r}" r="${rGoal}" class="gauge-goal" stroke-dasharray="${goalDash}" transform="rotate(-90 ${r} ${r})"/>
       <circle cx="${r}" cy="${r}" r="${rState}" class="gauge-track"/>
       <circle cx="${r}" cy="${r}" r="${rState}" class="gauge-state" stroke-dasharray="${stateDash}" transform="rotate(-90 ${r} ${r})"/>
-      <text x="${r}" y="${r}" class="gauge-glyph" text-anchor="middle" dominant-baseline="central">${escapeHtml(task.icon || GLYPHS[hash(task.directory) % GLYPHS.length])}</text>
+      <text x="${r}" y="${glyphY ?? r}" class="gauge-glyph" text-anchor="middle" dominant-baseline="central">${escapeHtml(task.icon || GLYPHS[hash(task.directory) % GLYPHS.length])}</text>
     </svg>`;
 }
 
@@ -75,6 +75,7 @@ function hydrate(host, server) {
         cost: session.cost || 0,
         active: !!activeMap?.[session.id],
         icon: icons.data[session.id] || "",
+        current: (todoList.find((todo) => todo.status === "in_progress") || {}).content || "",
         todos: {
           done: todoList.filter((todo) => todo.status === "completed" || todo.status === "cancelled").length,
           total: todoList.length,
@@ -167,9 +168,10 @@ function dialScreen() {
       return `
         <div class="dial-slide">
           <button class="dial-circle" data-sid="${escapeHtml(task.id)}" aria-label="Open task web UI">
-            ${gaugeSvg(task, 300)}
+            ${gaugeSvg(task, 300, 300 * 0.38)}
             <div class="dial-status">
               <div class="dial-state ${status}">${status === "running" ? "running" : status === "done" ? "done" : "idle"}</div>
+              ${task.current ? `<div class="dial-current">${escapeHtml(task.current)}</div>` : ""}
               <div>${task.todos.total ? `${task.todos.done}/${task.todos.total} goals` : "no goals yet"}</div>
               <div>${ago(new Date(task.updated).toISOString())}${task.cost ? ` · $${task.cost.toFixed(3)}` : ""}</div>
             </div>
