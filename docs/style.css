@@ -194,6 +194,20 @@ pre.msg {
   text-decoration: none;
 }
 
+.seg { display: flex; gap: 6px; margin-bottom: 16px; }
+.seg button {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--dim);
+  border-radius: 10px;
+  padding: 9px 0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.seg button.on { background: var(--surface-2); color: var(--text); border-color: var(--luna); }
+
 .gauge-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
@@ -250,6 +264,26 @@ pre.msg {
   align-items: center;
   gap: 8px;
   padding: 0 8px 8px;
+}
+
+.notice {
+  background: rgba(245, 197, 24, 0.1);
+  border: 1px solid rgba(245, 197, 24, 0.35);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+.linkbtn {
+  background: none;
+  border: none;
+  color: var(--sol);
+  font: inherit;
+  font-weight: 650;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
 }
 .framebar-title {
   font-size: 14px;
