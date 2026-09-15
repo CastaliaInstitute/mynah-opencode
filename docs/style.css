@@ -277,10 +277,20 @@ pre.msg {
 .dial-state { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--luna); }
 .dial-state.running { color: var(--terra); }
 .dial-state.done { color: var(--sol); }
-.dial-status div:not(.dial-state) { font-size: 12px; color: var(--dim); }
+.dial-current {
+  max-width: 78%;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-top: 1px solid var(--line);
+  padding-top: 5px;
+}
+.dial-status div:not(.dial-state):not(.dial-current) { font-size: 12px; color: var(--dim); }
 .dial-title { margin-top: 18px; font-size: 17px; font-weight: 650; text-align: center; padding: 0 16px; }
 .dial-sub { margin-top: 4px; color: var(--dim); font-size: 13px; text-align: center; }
-.dial .gauge-glyph { font-size: 74px; }
+.dial .gauge-glyph { font-size: 52px; }
 
 /* ---------- webui iframe strip ---------- */
 
