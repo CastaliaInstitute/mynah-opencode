@@ -299,7 +299,7 @@ async function api(path, options = {}, attempt = 0) {
       await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
       return api(path, options, attempt + 1);
     }
-    throw new Error("Can't reach the bridge — check Tailscale is on");
+    throw new Error(`Can't reach ${state.bridge.replace(/^https?:\/\//, "") || "the bridge"} — check Tailscale is on and the URL in ⚙ Settings`);
   }
   if (response.status === 401) {
     toast("Pair this device in Settings (bridge token)");
