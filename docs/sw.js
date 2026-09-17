@@ -1,5 +1,5 @@
 const SCOPE = self.registration.scope;
-const SHELL_CACHE = "mynah-shell-v13";
+const SHELL_CACHE = "mynah-shell-v14";
 const SHELL = ["", "index.html", "style.css", "app.js", "manifest.webmanifest"].map((path) => SCOPE + path);
 
 self.addEventListener("install", (event) => {
