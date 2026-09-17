@@ -256,6 +256,7 @@ pre.msg {
   text-overflow: ellipsis;
 }
 .gauge-sub { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gauge-usage { font-size: 10px; color: var(--luna); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
 .gauge-track { fill: none; stroke: var(--surface-3); stroke-width: 3; }
 .gauge-goal { fill: none; stroke: var(--sol); stroke-width: 3; stroke-linecap: round; }
@@ -318,6 +319,8 @@ pre.msg {
   padding-top: 5px;
 }
 .dial-status div:not(.dial-state):not(.dial-current) { font-size: 12px; color: var(--dim); }
+.dial-usage { font-size: 14px; font-weight: 620; color: var(--sol); margin-top: 3px; }
+.dial-usage.sub { font-size: 11px; font-weight: 400; color: var(--luna); margin-top: 1px; }
 .dial-title { margin-top: 18px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; text-align: center; padding: 0 16px; }
 .dial-sub { margin-top: 4px; color: var(--dim); font-size: 13px; text-align: center; }
 .dial .gauge-glyph { font-size: 52px; }
