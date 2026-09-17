@@ -73,6 +73,23 @@ function modelLabel(model) {
   return id.replace(/^[^/]*\//, "");
 }
 
+function tokText(value) {
+  if (!value) return "";
+  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `${(value / 1e6).toFixed(2).replace(/\.?0+$/, "")}M`;
+  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}k`;
+  return String(value);
+}
+
+function usageText(task) {
+  const tk = task.tokens || {};
+  const total = (tk.input || 0) + (tk.output || 0);
+  const cost = Number(task.cost || 0);
+  const billed = cost > 0 ? `$${cost.toFixed(4)}` : (total ? "free" : "");
+  const tok = total ? `${tokText(total)} tok` : "";
+  return [billed, tok].filter(Boolean).join(" · ");
+}
+
 function hydrate(host, server) {
   return async ({ data: sessions }, activeMap) => {
     const [todos, icons] = await Promise.all([
@@ -89,6 +106,8 @@ function hydrate(host, server) {
         directory: session.location?.directory || "(unknown)",
         updated: session.time?.updated || session.time?.created || 0,
         cost: session.cost || 0,
+        tokens: session.tokens || {},
+        model: session.model,
         active: !!activeMap?.[session.id],
         icon: icons.data[session.id] || "",
         current: (todoList.find((todo) => todo.status === "in_progress") || {}).content || "",
@@ -147,6 +166,7 @@ function renderDashboard() {
       <div class="gauge-sub">${mode === "project"
         ? escapeHtml(serverOf(task.host)?.hostname || task.host)
         : `<span style="color:${projectColor(task.directory)}">${escapeHtml(project(task.directory))}</span>`} · ${ago(new Date(task.updated).toISOString())}</div>
+      <div class="gauge-usage">${usageText(task)}${task.model ? ` · ${escapeHtml(modelLabel(task.model))}` : ""}</div>
     </a>`;
   let body;
   if (mode === "all") {
@@ -197,7 +217,9 @@ async function dialScreen() {
               <div class="dial-state ${status}">${status === "running" ? "running" : status === "done" ? "done" : "idle"}</div>
               ${task.current ? `<div class="dial-current">${escapeHtml(task.current)}</div>` : ""}
               <div>${task.todos.total ? `${task.todos.done}/${task.todos.total} goals` : "no goals yet"}</div>
-              <div>${ago(new Date(task.updated).toISOString())}${task.cost ? ` · $${task.cost.toFixed(3)}` : ""}</div>
+              <div>${ago(new Date(task.updated).toISOString())}</div>
+              <div class="dial-usage">${usageText(task)}${task.model ? ` · ${escapeHtml(modelLabel(task.model))}` : ""}</div>
+              ${task.tokens && (task.tokens.input || task.tokens.output) ? `<div class="dial-usage sub">in ${tokText(task.tokens.input || 0)} · out ${tokText(task.tokens.output || 0)} · cache ${tokText(task.tokens.cache?.read || 0)}</div>` : ""}
             </div>
           </button>
           <div class="dial-title">${escapeHtml(task.title)}</div>
@@ -476,7 +498,7 @@ async function sessionsScreen() {
           <div class="meta">
             ${active[session.id] ? '<span class="badge active">running</span>' : ""}
             <span>${ago(session.time?.updated || session.time?.created)}</span>
-            ${session.cost ? `<span>$${session.cost.toFixed(3)}</span>` : ""}
+            ${usageText(session) ? `<span>${usageText(session)}</span>` : ""}
           </div>
         </a>`).join("") : `<div class="empty">No tasks in this project.</div>`)
         + `<button class="fab" id="new">＋ New task</button>`;
